@@ -7,7 +7,7 @@ import sqlite3
 app = Flask(__name__)
 
 # Configuração da IA (Substitua pela sua chave)
-genai.configure(api_key="SUA_CHAVE_AQUI")
+genai.configure(api_key="AIzaSyAw_QZcYdHeq53ujB9veraT_fI9c5T3QNg")
 model = genai.GenerativeModel('gemini-pro')
 
 def conectar_banco():
