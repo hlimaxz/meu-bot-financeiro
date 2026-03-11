@@ -1,4 +1,5 @@
 import sqlite3
+import os
 import json
 import google.generativeai as genai
 from datetime import datetime
@@ -94,5 +95,6 @@ def bot_whatsapp():
 
 if __name__ == "__main__":
     conectar_banco()
-    print("Servidor rodando! Aguardando mensagens do WhatsApp...")
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    print(f"Servidor rodando na porta {port}!")
+    app.run(host='0.0.0.0', port=port)
