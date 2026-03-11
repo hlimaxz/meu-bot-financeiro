@@ -1,23 +1,18 @@
-import sqlite3
+import os
 import json
-import google.generativeai as genai
+import sqlite3
 from datetime import datetime
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-
-# ==========================================
-# 1. CONFIGURAÇÕES INICIAIS
-# ==========================================
-# Cole sua nova chave do Gemini aqui
-CHAVE_API_GEMINI = "AIzaSyAw_QZcYdHeq53ujB9veraT_fI9c5T3QNg"
-genai.configure(api_key=CHAVE_API_GEMINI)
-model = genai.GenerativeModel('gemini-2.5-flash')
+import google.generativeai as genai
 
 app = Flask(__name__)
 
-# ==========================================
-# 2. BANCO DE DADOS
-# ==========================================
+# 1. Configuração da IA (O modelo que o Render reconhece sem dar erro 404)
+genai.configure(api_key="AIzaSyAw_QZcYdHeq53ujB9veraT_fI9c5T3QNg")
+model = genai.GenerativeModel('gemini-2.5-flash')
+
+# 2. Banco de Dados
 def conectar_banco():
     conn = sqlite3.connect('gastos_kaliba.db')
     cursor = conn.cursor()
@@ -32,9 +27,7 @@ def conectar_banco():
     conn.commit()
     return conn
 
-# ==========================================
-# 3. INTELIGÊNCIA ARTIFICIAL
-# ==========================================
+# 3. Inteligência Artificial
 def extrair_dados_da_mensagem(mensagem_usuario):
     prompt = f"""
     Você é um assistente financeiro. Leia a mensagem do usuário e extraia a categoria do gasto e o valor.
@@ -42,57 +35,62 @@ def extrair_dados_da_mensagem(mensagem_usuario):
     {"categoria": "Nome da Categoria", "valor": 00.00}
     Mensagem: "{mensagem_usuario}"
     """
-    resposta = model.generate_content(prompt)
     try:
+        resposta = model.generate_content(prompt)
         texto_limpo = resposta.text.replace('```json', '').replace('```', '').strip()
         return json.loads(texto_limpo)
-    except:
-        return None
+    except Exception as e:
+        return f"ERRO_TECNICO: {str(e)}"
 
-# ==========================================
-# 4. LÓGICA DO BOT
-# ==========================================
-def gerar_relatorio_parcial(conn):
-    cursor = conn.cursor()
-    mes_atual = datetime.now().strftime("%Y-%m")
-    cursor.execute('SELECT categoria, valor FROM gastos WHERE data LIKE ?', (f'{mes_atual}%',))
-    gastos = cursor.fetchall()
-    
-    total = sum(gasto[1] for gasto in gastos)
-    
-    resposta = "Agenda de gastos do mês:\n"
-    for gasto in gastos:
-        resposta += f"{gasto[0]} - R$ {gasto[1]:.2f}\n"
-    resposta += f"\n*Total parcial: R$ {total:.2f}*"
-    return resposta
-
-# ==========================================
-# 5. CONEXÃO COM O WHATSAPP (TWILIO + FLASK)
-# ==========================================
-@app.route('/whatsapp', methods=['POST'])
-def bot_whatsapp():
-    mensagem_recebida = request.values.get('Body', '').lower()
-    dados = extrair_dados_da_mensagem(mensagem_recebida)
-    
-    if not dados:
-        resposta_texto = "Desculpe, não consegui entender o valor e a categoria. Pode tentar de novo?"
-    else:
-        categoria = dados['categoria'].capitalize()
-        valor = float(dados['valor'])
-        data_atual = datetime.now().strftime("%Y-%m-%d")
-
-        conn = conectar_banco()
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', 
-                       (data_atual, categoria, valor))
-        conn.commit()
-        resposta_texto = gerar_relatorio_parcial(conn)
-
+# 4. Conexão com WhatsApp
+@app.route("/whatsapp", methods=['POST'])
+def whatsapp():
+    mensagem_usuario = request.values.get('Body', '').lower()
     resp = MessagingResponse()
-    resp.message(resposta_texto)
+    
+    conn = conectar_banco()
+    cursor = conn.cursor()
+
+    # Comando para limpar
+    if "limpar tudo" in mensagem_usuario or "resetar" in mensagem_usuario:
+        cursor.execute("DELETE FROM gastos")
+        conn.commit()
+        conn.close()
+        resp.message("✅ Lista de gastos limpa com sucesso!")
+        return str(resp)
+
+    # Processa com IA
+    dados = extrair_dados_da_mensagem(mensagem_usuario)
+
+    # Verifica os erros
+    if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
+        resp.message(f"🕵️ Ops, o motor da IA travou. Erro técnico:\n\n{dados}")
+    elif not dados:
+        resp.message("A IA não retornou o formato JSON corretamente. Tente de novo.")
+    else:
+        # Tudo certo, salva no banco!
+        try:
+            categoria = dados['categoria'].capitalize()
+            valor_str = str(dados['valor']).replace("", ".")
+            valor = float(valor_str)
+            data_atual = datetime.now().strftime("%Y-%m-%d")
+
+            cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', 
+                           (data_atual, categoria, valor))
+            conn.commit()
+            
+            mes_atual = datetime.now().strftime("%Y-%m")
+            cursor.execute('SELECT SUM(valor) FROM gastos WHERE data LIKE ?', (f'{mes_atual}%',))
+            resultado = cursor.fetchone()[0]
+            total = resultado if resultado else 0.0
+            
+            resp.message(f"✅ Registrado: {categoria} - R$ {valor:.2f}\n📉 Total do Mês: R$ {total:.2f}")
+        except Exception as e:
+            resp.message(f"Erro ao salvar no banco: {e}")
+
+    conn.close()
     return str(resp)
 
 if __name__ == "__main__":
-    conectar_banco()
-    print("Servidor rodando! Aguardando mensagens do WhatsApp...")
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
