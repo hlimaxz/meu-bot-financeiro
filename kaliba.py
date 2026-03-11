@@ -17,7 +17,7 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # Atualizado para o modelo 1.5-flash (Mais rápido, barato e estável)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # 2. Banco de Dados
 def conectar_banco():
