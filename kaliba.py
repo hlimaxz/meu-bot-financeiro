@@ -8,9 +8,16 @@ import google.generativeai as genai
 
 app = Flask(__name__)
 
-# 1. Configuração da IA (O modelo que o Render reconhece sem dar erro 404)
-genai.configure(api_key="AIzaSyAw_QZcYdHeq53ujB9veraT_fI9c5T3QNg")
-model = genai.GenerativeModel('gemini-2.5-flash')
+# 1. Configuração da IA usando Variáveis de Ambiente (Segurança no Render)
+# NÃO COLOQUE A CHAVE DIRETAMENTE AQUI. 
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("⚠️ A variável GEMINI_API_KEY não foi configurada no Render.")
+
+genai.configure(api_key=api_key)
+
+# Atualizado para o modelo 1.5-flash (Mais rápido, barato e estável)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # 2. Banco de Dados
 def conectar_banco():
@@ -27,18 +34,20 @@ def conectar_banco():
     conn.commit()
     return conn
 
-# 3. Inteligência Artificial
+# 3. Inteligência Artificial no MODO DETETIVE (Agora com JSON nativo)
 def extrair_dados_da_mensagem(mensagem_usuario):
     prompt = f"""
-    Você é um assistente financeiro. Leia a mensagem do usuário e extraia a categoria do gasto e o valor.
-    Responda EXATAMENTE neste formato JSON, sem nenhum texto extra ou formatação markdown:
-    {"categoria": "Nome da Categoria", "valor": 00.00}
+    Você é um assistente financeiro. Extraia a categoria do gasto e o valor financeiro da mensagem.
+    Responda APENAS usando o seguinte esquema JSON: {{"categoria": "Nome", "valor": 00.00}}
     Mensagem: "{mensagem_usuario}"
     """
     try:
-        resposta = model.generate_content(prompt)
-        texto_limpo = resposta.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(texto_limpo)
+        # A mágica do Gemini 1.5: forçar a saída a ser um JSON perfeito
+        resposta = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        return json.loads(resposta.text)
     except Exception as e:
         return f"ERRO_TECNICO: {str(e)}"
 
@@ -62,16 +71,19 @@ def whatsapp():
     # Processa com IA
     dados = extrair_dados_da_mensagem(mensagem_usuario)
 
-    # Verifica os erros
+    # --- O BOT "DEDO DURO" ---
     if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
         resp.message(f"🕵️ Ops, o motor da IA travou. Erro técnico:\n\n{dados}")
-    elif not dados:
-        resp.message("A IA não retornou o formato JSON corretamente. Tente de novo.")
+        
+    elif not isinstance(dados, dict) or 'categoria' not in dados or 'valor' not in dados:
+        resp.message("A IA não conseguiu entender. Tente digitar algo como 'comida 18 reais'.")
+        
     else:
-        # Tudo certo, salva no banco!
+        # Caminho Feliz (Sucesso!)
         try:
-            categoria = dados['categoria'].capitalize()
-            valor_str = str(dados['valor']).replace("", ".")
+            categoria = str(dados.get('categoria', 'Geral')).capitalize()
+            # Garante que o valor venha limpo
+            valor_str = str(dados.get('valor', 0)).replace(",", ".")
             valor = float(valor_str)
             data_atual = datetime.now().strftime("%Y-%m-%d")
 
@@ -93,4 +105,5 @@ def whatsapp():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    # Para testes locais. No Render, usaremos o gunicorn.
     app.run(host='0.0.0.0', port=port)
