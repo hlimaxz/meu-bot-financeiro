@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 # 1. Configuração da IA (Mudei para 1.5-flash para garantir estabilidade)
 genai.configure(api_key="AIzaSyAw_QZcYdHeq53ujB9veraT_fI9c5T3QNg")
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-pro')
 
 # 2. Banco de Dados
 def conectar_banco():
