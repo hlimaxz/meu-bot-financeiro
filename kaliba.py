@@ -6,7 +6,7 @@ import sqlite3
 
 app = Flask(__name__)
 
-# Configuração da IA (Substitua pela sua chave)
+# Configuração da IA
 genai.configure(api_key="AIzaSyAw_QZcYdHeq53ujB9veraT_fI9c5T3QNg")
 model = genai.GenerativeModel('gemini-pro')
 
@@ -39,30 +39,43 @@ def whatsapp():
         resp.message("✅ Lista de gastos limpa com sucesso! Pode começar do zero.")
         return str(resp)
 
-    # LÓGICA DA IA PARA PROCESSAR GASTO
-    prompt = f"Extraia o item e o valor desta frase: '{mensagem_usuario}'. Responda apenas: item, valor. Exemplo: Pizza, 50.00"
+    # LÓGICA DA IA MELHORADA (PROMPT MAIS RÍGIDO)
+    prompt = (
+        f"Extraia o item e o valor da frase: '{mensagem_usuario}'. "
+        "Responda APENAS no formato: Item | Valor. "
+        "Exemplo: Pizza | 50.00. Não escreva frases, apenas os dados separados por '|'."
+    )
+    
     try:
         response = model.generate_content(prompt)
-        dados = response.text.split(',')
-        item = dados[0].strip()
-        valor = float(dados[1].strip())
+        # Limpa R$, espaços e troca vírgula por ponto para o Python entender o número
+        texto_limpo = response.text.replace("R$", "").replace("reais", "").replace(",", ".").strip()
+        
+        if "|" in texto_limpo:
+            dados = texto_limpo.split('|')
+            item = dados[0].strip().capitalize()
+            valor = float(dados[1].strip())
 
-        # SALVAR NO BANCO
-        cursor.execute("INSERT INTO gastos (item, valor) VALUES (?, ?)", (item, valor))
-        conn.commit()
-        
-        # BUSCAR TOTAL
-        cursor.execute("SELECT SUM(valor) FROM gastos")
-        total = cursor.fetchone()[0]
-        
-        resp.message(f"💰 Salvei: {item} - R$ {valor:.2f}\n📉 Total acumulado: R$ {total:.2f}")
-    except:
-        resp.message("Desculpe Kaliba, não entendi o gasto. Tente algo como: 'Padaria 15 reais'")
+            # SALVAR NO BANCO
+            cursor.execute("INSERT INTO gastos (item, valor) VALUES (?, ?)", (item, valor))
+            conn.commit()
+            
+            # BUSCAR TOTAL
+            cursor.execute("SELECT SUM(valor) FROM gastos")
+            total = cursor.fetchone()[0]
+            
+            resp.message(f"💰 Salvei: {item} - R$ {valor:.2f}\n📉 Total acumulado: R$ {total:.2f}")
+        else:
+            resp.message("Kaliba, mande assim: 'Comida 18' ou 'Mercado 50.50'")
+
+    except Exception as e:
+        print(f"Erro detalhado: {e}") # Isso aparece nos logs do Render
+        resp.message("Tive um problema ao processar esse valor. Tente escrever apenas o nome e o número.")
 
     conn.close()
     return str(resp)
 
 if __name__ == "__main__":
-    # Configuração vital para o Render encontrar a porta correta
-    port = int(os.environ.get("PORT", 5000))
+    # Importante: o Render usa portas dinâmicas, o padrão é 10000
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
