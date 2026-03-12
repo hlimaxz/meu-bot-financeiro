@@ -1,6 +1,9 @@
 import os
 import json
 import sqlite3
+import threading
+import time
+import requests
 from datetime import datetime
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
@@ -13,11 +16,32 @@ api_key = os.environ.get("GROQ_API_KEY")
 if not api_key:
     raise ValueError("⚠️ A variável GROQ_API_KEY não foi configurada no Render.")
 
-# Inicializa o cliente apontando para os servidores do Groq
 client = OpenAI(
     api_key=api_key,
     base_url="https://api.groq.com/openai/v1"
 )
+
+# ==========================================
+# MOTOR DE KEEP-ALIVE (O Despertador Interno)
+# ==========================================
+URL_DO_BOT = "https://SEU-APP-AQUI.onrender.com/ping" # <--- MUDE ISSO PARA O SEU LINK DO RENDER!
+
+@app.route("/ping")
+def ping():
+    return "Bot acordado e operando!", 200
+
+def ping_automatico():
+    while True:
+        time.sleep(600) # Espera 600 segundos (10 minutos)
+        try:
+            requests.get(URL_DO_BOT)
+            print("Ping interno enviado com sucesso!")
+        except Exception as e:
+            print(f"Erro no ping interno: {e}")
+
+# Inicia o despertador em segundo plano assim que o código roda
+threading.Thread(target=ping_automatico, daemon=True).start()
+# ==========================================
 
 # 2. Banco de Dados
 def conectar_banco():
@@ -34,7 +58,7 @@ def conectar_banco():
     conn.commit()
     return conn
 
-# 3. Inteligência Artificial no MODO DETETIVE (Agora entende Ganhos)
+# 3. Inteligência Artificial no MODO DETETIVE
 def extrair_dados_da_mensagem(mensagem_usuario):
     prompt_sistema = "Você é um assistente financeiro. Extraia a categoria da transação, o valor, e classifique se é um 'gasto' ou 'ganho'. Retorne APENAS um JSON válido."
     prompt_usuario = f"""
@@ -67,8 +91,8 @@ def whatsapp():
     conn = conectar_banco()
     cursor = conn.cursor()
 
-    # Comando para limpar
-    if "limpar tudo" in mensagem_usuario or "resetar" in mensagem_usuario:
+    # Comando para limpar (com as 3 variações)
+    if "limpar tudo" in mensagem_usuario or "resetar" in mensagem_usuario or "limpar chat" in mensagem_usuario:
         cursor.execute("DELETE FROM gastos")
         conn.commit()
         conn.close()
@@ -89,12 +113,11 @@ def whatsapp():
         # Caminho Feliz (Sucesso!)
         try:
             categoria = str(dados.get('categoria', 'Geral')).capitalize()
-            # Garante que o valor venha limpo
             valor_str = str(dados.get('valor', 0)).replace(",", ".")
             valor_absoluto = abs(float(valor_str))
             tipo = str(dados.get('tipo', 'gasto')).lower()
             
-            # A MÁGICA: Ganho vira negativo para subtrair do total de gastos
+            # Ganho vira negativo para subtrair do total de gastos
             if tipo == 'ganho' or tipo == 'receita':
                 valor_banco = -valor_absoluto
             else:
@@ -102,17 +125,14 @@ def whatsapp():
                 
             data_atual = datetime.now().strftime("%Y-%m-%d")
 
-            # Salva no banco
             cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', 
                            (data_atual, categoria, valor_banco))
             conn.commit()
             
-            # --- MONTAGEM DA LISTA ESTILO EXTRATO ---
             mes_atual = datetime.now().strftime("%Y-%m")
             cursor.execute('SELECT categoria, valor FROM gastos WHERE data LIKE ?', (f'{mes_atual}%',))
             registros = cursor.fetchall()
             
-            # Dicionário para deixar o mês em Português
             meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
             nome_mes = meses_pt[datetime.now().strftime("%m")]
             
