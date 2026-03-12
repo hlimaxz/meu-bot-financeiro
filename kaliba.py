@@ -45,7 +45,7 @@ def extrair_dados_da_mensagem(mensagem_usuario):
     try:
         # Chamada para o Groq forçando o formato JSON
         response = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             response_format={ "type": "json_object" },
             messages=[
                 {"role": "system", "content": prompt_sistema},
