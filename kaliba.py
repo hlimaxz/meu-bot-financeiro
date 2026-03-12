@@ -9,7 +9,7 @@ from openai import OpenAI
 app = Flask(__name__)
 
 # 1. Configuração da IA (Groq via biblioteca OpenAI)
-api_key = os.environ.get("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")
+api_key = os.environ.get("GROQ_API_KEY")
 if not api_key:
     raise ValueError("⚠️ A variável GROQ_API_KEY não foi configurada no Render.")
 
