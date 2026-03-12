@@ -4,20 +4,20 @@ import sqlite3
 from datetime import datetime
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-import google.generativeai as genai
+from openai import OpenAI
 
 app = Flask(__name__)
 
-# 1. Configuração da IA usando Variáveis de Ambiente (Segurança no Render)
-# NÃO COLOQUE A CHAVE DIRETAMENTE AQUI. 
-api_key = os.environ.get("GEMINI_API_KEY")
+# 1. Configuração da IA (Groq via biblioteca OpenAI)
+api_key = os.environ.get("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")
 if not api_key:
-    raise ValueError("⚠️ A variável GEMINI_API_KEY não foi configurada no Render.")
+    raise ValueError("⚠️ A variável GROQ_API_KEY não foi configurada no Render.")
 
-genai.configure(api_key=api_key)
-
-# Atualizado para o modelo 1.5-flash (Mais rápido, barato e estável)
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+# Inicializa o cliente apontando para os servidores do Groq (O Pulo do Gato!)
+client = OpenAI(
+    api_key=api_key,
+    base_url="https://api.groq.com/openai/v1"
+)
 
 # 2. Banco de Dados
 def conectar_banco():
@@ -34,20 +34,28 @@ def conectar_banco():
     conn.commit()
     return conn
 
-# 3. Inteligência Artificial no MODO DETETIVE (Agora com JSON nativo)
+# 3. Inteligência Artificial no MODO DETETIVE (Groq + Llama 3)
 def extrair_dados_da_mensagem(mensagem_usuario):
-    prompt = f"""
-    Você é um assistente financeiro. Extraia a categoria do gasto e o valor financeiro da mensagem.
+    prompt_sistema = "Você é um assistente financeiro. Extraia a categoria do gasto e o valor financeiro da mensagem e retorne APENAS um JSON válido."
+    prompt_usuario = f"""
     Responda APENAS usando o seguinte esquema JSON: {{"categoria": "Nome", "valor": 00.00}}
     Mensagem: "{mensagem_usuario}"
     """
+    
     try:
-        # A mágica do Gemini 1.5: forçar a saída a ser um JSON perfeito
-        resposta = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        # Chamada para o Groq forçando o formato JSON
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            response_format={ "type": "json_object" },
+            messages=[
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": prompt_usuario}
+            ]
         )
-        return json.loads(resposta.text)
+        # Extrai o texto da resposta e converte de JSON para dicionário
+        conteudo_resposta = response.choices[0].message.content
+        return json.loads(conteudo_resposta)
+        
     except Exception as e:
         return f"ERRO_TECNICO: {str(e)}"
 
