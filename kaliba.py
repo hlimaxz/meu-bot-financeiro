@@ -24,7 +24,7 @@ client = OpenAI(
 # ==========================================
 # MOTOR DE KEEP-ALIVE (O Despertador Interno)
 # ==========================================
-URL_DO_BOT = "https://SEU-APP-AQUI.onrender.com/ping" # <--- MUDE ISSO PARA O SEU LINK DO RENDER!
+URL_DO_BOT = "https://meu-bot-financeiro-vcou.onrender.com/ping" # <--- MUDE ISSO PARA O SEU LINK DO RENDER!
 
 @app.route("/ping")
 def ping():
