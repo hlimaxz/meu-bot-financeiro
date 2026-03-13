@@ -57,22 +57,26 @@ def conectar_banco():
     conn.commit()
     return conn
 
-# 3. Inteligência Artificial MODO ASSISTENTE PESSOAL (SUPER CÉREBRO)
+# 3. Inteligência Artificial MODO ASSISTENTE PESSOAL EMPÁTICA
 def extrair_dados_da_mensagem(mensagem_usuario):
-    prompt_sistema = """Você é uma assistente financeira pessoal inteligente e muito amigável, exclusiva do seu criador, Kaliba.
-    Seu objetivo é conversar de forma natural, dar dicas financeiras se ele pedir, e registrar gastos/ganhos perfeitamente.
+    # Demos uma "alma" para a IA aqui e ensinamos ela a lidar com listas!
+    prompt_sistema = """Você é uma assistente financeira pessoal brilhante, empática e muito amigável, exclusiva do seu criador, Kaliba.
+    Sua personalidade é calorosa, encorajadora e clara. Você conversa de forma natural, comemora as vitórias financeiras dele e dá dicas valiosas se ele pedir.
     
+    Você é capaz de ler mensagens com múltiplos gastos ou ganhos de uma só vez.
     Você DEVE retornar APENAS um objeto JSON válido, com esta estrutura exata:
     {
         "intencao": "transacao" ou "conversa",
-        "resposta_ia": "Sua resposta conversacional, amigável e direta para o Kaliba.",
-        "transacao": {"categoria": "Nome Curto", "valor": 0.0, "tipo": "gasto" ou "ganho"} 
+        "resposta_ia": "Sua resposta humana, natural, elaborada e empática para o Kaliba.",
+        "transacoes": [
+            {"categoria": "Nome Curto", "valor": 0.0, "tipo": "gasto" ou "ganho"}
+        ]
     }
     
     Regras vitais:
-    1. Se ele relatar uma compra, pagamento ou dinheiro recebido, a intenção é "transacao". Preencha os dados e crie uma resposta confirmando.
-    2. Se ele disser "oi", pedir um conselho financeiro, ou fizer uma pergunta, a intenção é "conversa". Crie sua resposta e deixe "transacao" como null.
-    3. Seja prestativa, mas não escreva textos gigantes.
+    1. Se ele enviar UMA ou MAIS compras/ganhos (ex: uma lista), extraia TODOS os itens e coloque dentro da lista "transacoes".
+    2. Se ele apenas disser "oi" ou pedir conselhos sem passar valores, a intenção é "conversa" e a lista "transacoes" deve ficar vazia [].
+    3. A "resposta_ia" deve validar o que ele mandou. Se ele mandar uma lista grande, diga algo como "Uau, bastante coisa! Já registrei tudo aqui para você."
     """
     
     prompt_usuario = f"Mensagem do Kaliba: '{mensagem_usuario}'"
@@ -118,30 +122,34 @@ def whatsapp():
     try:
         intencao = dados.get("intencao", "conversa")
         resposta_da_ia = dados.get("resposta_ia", "")
+        transacoes = dados.get("transacoes", []) # Agora a gente pega a lista inteira!
         
-        # CENA 1: É apenas um bate-papo ou dúvida (não salva no banco)
-        if intencao == "conversa" or not dados.get("transacao"):
-            resp.message(resposta_da_ia)
+        # CENA 1: É apenas um bate-papo (Lista de transações está vazia)
+        if intencao == "conversa" or not transacoes:
+            resp.message(f"🤖 {resposta_da_ia}")
             
-        # CENA 2: É uma transação financeira (salva no banco e mostra extrato)
+        # CENA 2: É uma transação (Ou várias de uma vez!)
         else:
-            transacao = dados["transacao"]
-            categoria = str(transacao.get('categoria', 'Geral')).capitalize()
-            valor_str = str(transacao.get('valor', 0)).replace(",", ".")
-            valor_absoluto = abs(float(valor_str))
-            tipo = str(transacao.get('tipo', 'gasto')).lower()
-            
-            # Ganho negativo para matemática fechar
-            if tipo == 'ganho' or tipo == 'receita':
-                valor_banco = -valor_absoluto
-            else:
-                valor_banco = valor_absoluto
-                
             data_atual = datetime.now().strftime("%Y-%m-%d")
-            cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', (data_atual, categoria, valor_banco))
+            
+            # Aqui está a mágica: um "for" que repete a gravação para cada item da lista
+            for item in transacoes:
+                categoria = str(item.get('categoria', 'Geral')).capitalize()
+                valor_str = str(item.get('valor', 0)).replace(",", ".")
+                valor_absoluto = abs(float(valor_str))
+                tipo = str(item.get('tipo', 'gasto')).lower()
+                
+                if tipo == 'ganho' or tipo == 'receita':
+                    valor_banco = -valor_absoluto
+                else:
+                    valor_banco = valor_absoluto
+                    
+                cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', (data_atual, categoria, valor_banco))
+            
+            # Salva tudo de uma vez
             conn.commit()
             
-            # Monta o extrato
+            # Monta o extrato final
             mes_atual = datetime.now().strftime("%Y-%m")
             cursor.execute('SELECT categoria, valor FROM gastos WHERE data LIKE ?', (f'{mes_atual}%',))
             registros = cursor.fetchall()
@@ -158,14 +166,18 @@ def whatsapp():
                 val_formatado = f"{abs(val):.2f}".replace(".", ",")
                 
                 if val < 0:
-                    extrato_txt += f"+ {cat_formatada}: R$ {val_formatado}\n"
+                    extrato_txt += f"🟢 + {cat_formatada}: R$ {val_formatado}\n"
                 else:
-                    extrato_txt += f"- {cat_formatada}: R$ {val_formatado}\n"
+                    extrato_txt += f"🔴 - {cat_formatada}: R$ {val_formatado}\n"
             
             total_formatado = f"{total:.2f}".replace(".", ",")
-            extrato_txt += f"\ntotal do mês = {total_formatado}"
             
-            # Junta a resposta humana da IA com o extrato bonitinho
+            if total > 0:
+                extrato_txt += f"\n📊 Saldo Atual = 🔴 R$ -{total_formatado} (Gastando mais do que ganha)"
+            else:
+                extrato_txt += f"\n📊 Saldo Atual = 🟢 R$ {str(total_formatado).replace('-', '')} (No azul!)"
+            
+            # Junta a resposta super humana da IA com o extrato completo
             mensagem_final = f"🤖 {resposta_da_ia}\n\n{extrato_txt}"
             resp.message(mensagem_final)
             
