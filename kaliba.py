@@ -214,5 +214,5 @@ def whatsapp():
 if __name__ == "__main__":
     # O Render passa a porta correta na variável de ambiente PORT
     # Se não encontrar, ele usa a 5000 como reserva.
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
