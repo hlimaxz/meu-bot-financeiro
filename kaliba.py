@@ -41,11 +41,10 @@ def ping_automatico():
 threading.Thread(target=ping_automatico, daemon=True).start()
 # ==========================================
 
-# 2. Banco de Dados (Agora com tabela de Histórico!)
+# 2. Banco de Dados
 def conectar_banco():
     conn = sqlite3.connect('gastos_kaliba.db')
     cursor = conn.cursor()
-    # Tabela de gastos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +53,6 @@ def conectar_banco():
             valor REAL
         )
     ''')
-    # Nova tabela para a Memória da IA
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,53 +63,56 @@ def conectar_banco():
     conn.commit()
     return conn
 
-# Funções de Memória
+# Funções de Memória (AGORA COM MEMÓRIA LONGA)
 def obter_historico(cursor):
-    # Pega as últimas 6 mensagens para ter contexto da conversa
-    cursor.execute("SELECT role, content FROM historico ORDER BY id DESC LIMIT 6")
+    # Aumentamos para 20 mensagens de histórico para ela não perder o fio da meada!
+    cursor.execute("SELECT role, content FROM historico ORDER BY id DESC LIMIT 20")
     linhas = cursor.fetchall()
-    # Inverte para ficar na ordem cronológica correta
     return [{"role": r[0], "content": r[1]} for r in reversed(linhas)]
 
 def salvar_historico(cursor, conn, role, content):
     cursor.execute("INSERT INTO historico (role, content) VALUES (?, ?)", (role, content))
     conn.commit()
 
-# 3. Inteligência Artificial (Agora com Memória e Identidade Corrigida)
+# 3. Inteligência Artificial (MODELO 70B - ALTA INTELIGÊNCIA)
 def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
     meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
     mes_atual_nome = meses_pt[datetime.now().strftime("%m")]
     ano_atual = datetime.now().strftime("%Y")
     
-    prompt_sistema = f"""O SEU NOME é Kaliba. Você é uma assistente financeira pessoal em formato de IA.
+    prompt_sistema = f"""O SEU NOME é Kaliba. Você é uma assistente financeira pessoal brilhante em formato de IA.
     O nome do usuário com quem você conversa é Hector.
     Hoje é {datetime.now().strftime('%d/%m/%Y')} (Mês de {mes_atual_nome} de {ano_atual}).
     
-    Sua personalidade: Empática, muito inteligente para matemática, focada em resolver os problemas financeiros do Hector.
-    Se ele te der um objetivo (ex: juntar 1500 reais até Julho), FAÇA AS CONTAS MATEMÁTICAS! Calcule quantos meses faltam e divida o valor para ele, explicando passo a passo.
+    Sua personalidade: Empática, extremamente lógica, analítica e focada em resolver os problemas do Hector.
+    
+    REGRAS DE OURO PARA LÓGICA E MEMÓRIA:
+    1. Leia TODO o histórico da conversa com atenção. Lembre-se dos valores exatos que o Hector te falou antes.
+    2. Se o Hector mudar um valor ou te corrigir (ex: "na verdade vou receber 365"), VOCÊ DEVE DESCARTAR O VALOR ANTIGO e refazer a lógica usando a nova informação imediatamente. Assuma o erro com naturalidade.
+    3. Pense passo a passo. Seja clara em como chegou no resultado de um cálculo.
     
     Você DEVE retornar APENAS um objeto JSON válido, com esta estrutura exata:
     {{
         "intencao": "transacao" ou "conversa",
-        "resposta_ia": "Sua resposta humana, natural, com cálculos se necessário.",
+        "resposta_ia": "Sua resposta humana, natural e muito inteligente.",
         "transacoes": [
             {{"categoria": "Nome Curto", "valor": 0.0, "tipo": "gasto" ou "ganho"}}
         ]
     }}
     
-    Regras vitais:
-    1. Se ele estiver apenas conversando, tirando dúvidas, ou pedindo cálculos, a intenção é "conversa" e a lista "transacoes" fica vazia [].
-    2. Apenas preencha a lista "transacoes" se ele afirmar que FEZ um gasto ou RECEBEU um dinheiro HOJE.
+    Regras para o JSON:
+    1. Se ele estiver apenas conversando ou pedindo cálculos, a intenção é "conversa" e "transacoes" fica vazia [].
+    2. Apenas preencha "transacoes" se ele afirmar que FEZ um gasto ou RECEBEU dinheiro para registrar na planilha hoje.
     """
     
-    # Monta as mensagens juntando o sistema + histórico (memória) + mensagem atual
     mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
     mensagens_para_ia.extend(historico_conversa)
     mensagens_para_ia.append({"role": "user", "content": f"Mensagem do Hector: '{mensagem_usuario}'"})
     
     try:
+        # AQUI ESTÁ O UPGRADE DE INTELIGÊNCIA! Trocamos para o modelo 70B!
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",
             response_format={ "type": "json_object" },
             messages=mensagens_para_ia
         )
@@ -131,16 +132,13 @@ def whatsapp():
 
     if "limpar tudo" in mensagem_usuario or "resetar" in mensagem_usuario or "limpar chat" in mensagem_usuario:
         cursor.execute("DELETE FROM gastos")
-        cursor.execute("DELETE FROM historico") # Limpa a memória também
+        cursor.execute("DELETE FROM historico")
         conn.commit()
         conn.close()
         resp.message("✅ Suas contas e minha memória foram zeradas com sucesso!")
         return str(resp)
 
-    # 1. Puxa a memória da IA
     historico = obter_historico(cursor)
-
-    # 2. A IA analisa a mensagem (agora sabendo o que foi falado antes!)
     dados = extrair_dados_da_mensagem(mensagem_usuario, historico)
 
     if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
@@ -153,7 +151,6 @@ def whatsapp():
         resposta_da_ia = dados.get("resposta_ia", "")
         transacoes = dados.get("transacoes", [])
         
-        # 3. Salva a nova mensagem do usuário e a resposta da IA na memória
         salvar_historico(cursor, conn, "user", mensagem_usuario)
         salvar_historico(cursor, conn, "assistant", resposta_da_ia)
         
