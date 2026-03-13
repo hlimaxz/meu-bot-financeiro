@@ -112,7 +112,7 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
     try:
         # AQUI ESTÁ O UPGRADE DE INTELIGÊNCIA! Trocamos para o modelo 70B!
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             response_format={ "type": "json_object" },
             messages=mensagens_para_ia
         )
