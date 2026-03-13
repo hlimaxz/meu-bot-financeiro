@@ -41,55 +41,72 @@ def ping_automatico():
 threading.Thread(target=ping_automatico, daemon=True).start()
 # ==========================================
 
-# 2. Banco de Dados
+# 2. Banco de Dados MULTI-CONTAS
 def conectar_banco():
     conn = sqlite3.connect('gastos_kaliba.db')
     cursor = conn.cursor()
+    
+    # Tabela de gastos agora tem a coluna "telefone" para separar os usuários
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telefone TEXT,
             data TEXT,
             categoria TEXT,
             valor REAL
         )
     ''')
+    
+    # Memória agora também é separada por telefone
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telefone TEXT,
             role TEXT,
             content TEXT
         )
     ''')
+    
+    # Atualiza o banco de dados antigo sem quebrar o que já existe
+    try:
+        cursor.execute("ALTER TABLE gastos ADD COLUMN telefone TEXT DEFAULT 'geral'")
+        cursor.execute("ALTER TABLE historico ADD COLUMN telefone TEXT DEFAULT 'geral'")
+    except:
+        pass
+        
     conn.commit()
     return conn
 
-# Funções de Memória (AGORA COM MEMÓRIA LONGA)
-def obter_historico(cursor):
-    # Aumentamos para 20 mensagens de histórico para ela não perder o fio da meada!
-    cursor.execute("SELECT role, content FROM historico ORDER BY id DESC LIMIT 20")
+# Funções de Memória Individuais
+def obter_historico(cursor, telefone):
+    # Puxa apenas a memória atrelada ao número de quem mandou a mensagem
+    cursor.execute("SELECT role, content FROM historico WHERE telefone = ? ORDER BY id DESC LIMIT 20", (telefone,))
     linhas = cursor.fetchall()
     return [{"role": r[0], "content": r[1]} for r in reversed(linhas)]
 
-def salvar_historico(cursor, conn, role, content):
-    cursor.execute("INSERT INTO historico (role, content) VALUES (?, ?)", (role, content))
+def salvar_historico(cursor, conn, telefone, role, content):
+    cursor.execute("INSERT INTO historico (telefone, role, content) VALUES (?, ?, ?)", (telefone, role, content))
     conn.commit()
 
-# 3. Inteligência Artificial (MODELO 70B - ALTA INTELIGÊNCIA)
-def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
+# 3. Inteligência Artificial
+def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, telefone):
     meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
     mes_atual_nome = meses_pt[datetime.now().strftime("%m")]
     ano_atual = datetime.now().strftime("%Y")
     
     prompt_sistema = f"""O SEU NOME é Kaliba. Você é uma assistente financeira pessoal brilhante em formato de IA.
-    O nome do usuário com quem você conversa é Hector.
     Hoje é {datetime.now().strftime('%d/%m/%Y')} (Mês de {mes_atual_nome} de {ano_atual}).
     
-    Sua personalidade: Empática, extremamente lógica, analítica e focada em resolver os problemas do Hector.
+    IMPORTANTE: Você agora atende várias pessoas diferentes da mesma família. Cada pessoa tem um banco de dados separado.
+    O número de WhatsApp da pessoa que está falando com você agora é: {telefone}. 
+    Se você ainda não souber o nome dela, pergunte educadamente. Se já souber pelo histórico, use o nome dela com carinho.
+    
+    Sua personalidade: Empática, extremamente lógica, analítica e focada em resolver os problemas do usuário.
     
     REGRAS DE OURO PARA LÓGICA E MEMÓRIA:
-    1. Leia TODO o histórico da conversa com atenção. Lembre-se dos valores exatos que o Hector te falou antes.
-    2. Se o Hector mudar um valor ou te corrigir (ex: "na verdade vou receber 365"), VOCÊ DEVE DESCARTAR O VALOR ANTIGO e refazer a lógica usando a nova informação imediatamente. Assuma o erro com naturalidade.
-    3. Pense passo a passo. Seja clara em como chegou no resultado de um cálculo.
+    1. Leia TODO o histórico da conversa com atenção. Lembre-se do nome do usuário e de seus ganhos.
+    2. Se o usuário corrigir um valor, descarte o antigo e refaça a lógica com a nova informação imediatamente.
+    3. Pense passo a passo e seja clara nos cálculos.
     
     Você DEVE retornar APENAS um objeto JSON válido, com esta estrutura exata:
     {{
@@ -99,18 +116,13 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
             {{"categoria": "Nome Curto", "valor": 0.0, "tipo": "gasto" ou "ganho"}}
         ]
     }}
-    
-    Regras para o JSON:
-    1. Se ele estiver apenas conversando ou pedindo cálculos, a intenção é "conversa" e "transacoes" fica vazia [].
-    2. Apenas preencha "transacoes" se ele afirmar que FEZ um gasto ou RECEBEU dinheiro para registrar na planilha hoje.
     """
     
     mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
     mensagens_para_ia.extend(historico_conversa)
-    mensagens_para_ia.append({"role": "user", "content": f"Mensagem do Hector: '{mensagem_usuario}'"})
+    mensagens_para_ia.append({"role": "user", "content": f"Mensagem do usuário: '{mensagem_usuario}'"})
     
     try:
-        # AQUI ESTÁ O UPGRADE DE INTELIGÊNCIA! Trocamos para o modelo 70B!
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             response_format={ "type": "json_object" },
@@ -125,21 +137,26 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
 @app.route("/whatsapp", methods=['POST'])
 def whatsapp():
     mensagem_usuario = request.values.get('Body', '').lower()
+    
+    # AQUI ESTÁ A CHAVE DE OURO: O BOT PEGA O NÚMERO DE QUEM MANDOU A MENSAGEM
+    numero_remetente = request.values.get('From', 'desconhecido') 
+    
     resp = MessagingResponse()
     
     conn = conectar_banco()
     cursor = conn.cursor()
 
+    # O "limpar tudo" agora limpa apenas o banco de dados do número específico
     if "limpar tudo" in mensagem_usuario or "resetar" in mensagem_usuario or "limpar chat" in mensagem_usuario:
-        cursor.execute("DELETE FROM gastos")
-        cursor.execute("DELETE FROM historico")
+        cursor.execute("DELETE FROM gastos WHERE telefone = ?", (numero_remetente,))
+        cursor.execute("DELETE FROM historico WHERE telefone = ?", (numero_remetente,))
         conn.commit()
         conn.close()
         resp.message("✅ Suas contas e minha memória foram zeradas com sucesso!")
         return str(resp)
 
-    historico = obter_historico(cursor)
-    dados = extrair_dados_da_mensagem(mensagem_usuario, historico)
+    historico = obter_historico(cursor, numero_remetente)
+    dados = extrair_dados_da_mensagem(mensagem_usuario, historico, numero_remetente)
 
     if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
         resp.message(f"🕵️ Ops, o motor travou:\n\n{dados}")
@@ -151,8 +168,8 @@ def whatsapp():
         resposta_da_ia = dados.get("resposta_ia", "")
         transacoes = dados.get("transacoes", [])
         
-        salvar_historico(cursor, conn, "user", mensagem_usuario)
-        salvar_historico(cursor, conn, "assistant", resposta_da_ia)
+        salvar_historico(cursor, conn, numero_remetente, "user", mensagem_usuario)
+        salvar_historico(cursor, conn, numero_remetente, "assistant", resposta_da_ia)
         
         if intencao == "conversa" or not transacoes:
             resp.message(f"🤖 {resposta_da_ia}")
@@ -171,12 +188,14 @@ def whatsapp():
                 else:
                     valor_banco = valor_absoluto
                     
-                cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', (data_atual, categoria, valor_banco))
+                # Salva a transação amarrada ao número de telefone!
+                cursor.execute('INSERT INTO gastos (telefone, data, categoria, valor) VALUES (?, ?, ?, ?)', (numero_remetente, data_atual, categoria, valor_banco))
             
             conn.commit()
             
             mes_atual = datetime.now().strftime("%Y-%m")
-            cursor.execute('SELECT categoria, valor FROM gastos WHERE data LIKE ?', (f'{mes_atual}%',))
+            # Puxa o extrato filtrando apenas pelos gastos desse número de telefone
+            cursor.execute('SELECT categoria, valor FROM gastos WHERE data LIKE ? AND telefone = ?', (f'{mes_atual}%', numero_remetente))
             registros = cursor.fetchall()
             
             meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
