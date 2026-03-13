@@ -22,7 +22,7 @@ client = OpenAI(
 )
 
 # ==========================================
-# MOTOR DE KEEP-ALIVE (O Despertador Interno)
+# MOTOR DE KEEP-ALIVE
 # ==========================================
 URL_DO_BOT = "https://meu-bot-financeiro-vcou.onrender.com/ping"
 
@@ -35,17 +35,17 @@ def ping_automatico():
         time.sleep(600)
         try:
             requests.get(URL_DO_BOT)
-            print("Ping interno enviado com sucesso!")
         except Exception as e:
-            print(f"Erro no ping interno: {e}")
+            pass
 
 threading.Thread(target=ping_automatico, daemon=True).start()
 # ==========================================
 
-# 2. Banco de Dados
+# 2. Banco de Dados (Agora com tabela de Histórico!)
 def conectar_banco():
     conn = sqlite3.connect('gastos_kaliba.db')
     cursor = conn.cursor()
+    # Tabela de gastos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,41 +54,66 @@ def conectar_banco():
             valor REAL
         )
     ''')
+    # Nova tabela para a Memória da IA
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS historico (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT,
+            content TEXT
+        )
+    ''')
     conn.commit()
     return conn
 
-# 3. Inteligência Artificial MODO ASSISTENTE PESSOAL EMPÁTICA
-def extrair_dados_da_mensagem(mensagem_usuario):
-    # Demos uma "alma" para a IA aqui e ensinamos ela a lidar com listas!
-    prompt_sistema = """Você é uma assistente financeira pessoal brilhante, empática e muito amigável, exclusiva do seu criador, Kaliba.
-    Sua personalidade é calorosa, encorajadora e clara. Você conversa de forma natural, comemora as vitórias financeiras dele e dá dicas valiosas se ele pedir.
+# Funções de Memória
+def obter_historico(cursor):
+    # Pega as últimas 6 mensagens para ter contexto da conversa
+    cursor.execute("SELECT role, content FROM historico ORDER BY id DESC LIMIT 6")
+    linhas = cursor.fetchall()
+    # Inverte para ficar na ordem cronológica correta
+    return [{"role": r[0], "content": r[1]} for r in reversed(linhas)]
+
+def salvar_historico(cursor, conn, role, content):
+    cursor.execute("INSERT INTO historico (role, content) VALUES (?, ?)", (role, content))
+    conn.commit()
+
+# 3. Inteligência Artificial (Agora com Memória e Identidade Corrigida)
+def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
+    meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
+    mes_atual_nome = meses_pt[datetime.now().strftime("%m")]
+    ano_atual = datetime.now().strftime("%Y")
     
-    Você é capaz de ler mensagens com múltiplos gastos ou ganhos de uma só vez.
+    prompt_sistema = f"""O SEU NOME é Kaliba. Você é uma assistente financeira pessoal em formato de IA.
+    O nome do usuário com quem você conversa é Hector.
+    Hoje é {datetime.now().strftime('%d/%m/%Y')} (Mês de {mes_atual_nome} de {ano_atual}).
+    
+    Sua personalidade: Empática, muito inteligente para matemática, focada em resolver os problemas financeiros do Hector.
+    Se ele te der um objetivo (ex: juntar 1500 reais até Julho), FAÇA AS CONTAS MATEMÁTICAS! Calcule quantos meses faltam e divida o valor para ele, explicando passo a passo.
+    
     Você DEVE retornar APENAS um objeto JSON válido, com esta estrutura exata:
-    {
+    {{
         "intencao": "transacao" ou "conversa",
-        "resposta_ia": "Sua resposta humana, natural, elaborada e empática para o Kaliba.",
+        "resposta_ia": "Sua resposta humana, natural, com cálculos se necessário.",
         "transacoes": [
-            {"categoria": "Nome Curto", "valor": 0.0, "tipo": "gasto" ou "ganho"}
+            {{"categoria": "Nome Curto", "valor": 0.0, "tipo": "gasto" ou "ganho"}}
         ]
-    }
+    }}
     
     Regras vitais:
-    1. Se ele enviar UMA ou MAIS compras/ganhos (ex: uma lista), extraia TODOS os itens e coloque dentro da lista "transacoes".
-    2. Se ele apenas disser "oi" ou pedir conselhos sem passar valores, a intenção é "conversa" e a lista "transacoes" deve ficar vazia [].
-    3. A "resposta_ia" deve validar o que ele mandou. Se ele mandar uma lista grande, diga algo como "Uau, bastante coisa! Já registrei tudo aqui para você."
+    1. Se ele estiver apenas conversando, tirando dúvidas, ou pedindo cálculos, a intenção é "conversa" e a lista "transacoes" fica vazia [].
+    2. Apenas preencha a lista "transacoes" se ele afirmar que FEZ um gasto ou RECEBEU um dinheiro HOJE.
     """
     
-    prompt_usuario = f"Mensagem do Kaliba: '{mensagem_usuario}'"
+    # Monta as mensagens juntando o sistema + histórico (memória) + mensagem atual
+    mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
+    mensagens_para_ia.extend(historico_conversa)
+    mensagens_para_ia.append({"role": "user", "content": f"Mensagem do Hector: '{mensagem_usuario}'"})
     
     try:
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             response_format={ "type": "json_object" },
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": prompt_usuario}
-            ]
+            messages=mensagens_para_ia
         )
         return json.loads(response.choices[0].message.content)
         
@@ -106,13 +131,17 @@ def whatsapp():
 
     if "limpar tudo" in mensagem_usuario or "resetar" in mensagem_usuario or "limpar chat" in mensagem_usuario:
         cursor.execute("DELETE FROM gastos")
+        cursor.execute("DELETE FROM historico") # Limpa a memória também
         conn.commit()
         conn.close()
-        resp.message("✅ Suas contas foram zeradas com sucesso!")
+        resp.message("✅ Suas contas e minha memória foram zeradas com sucesso!")
         return str(resp)
 
-    # A IA analisa a mensagem
-    dados = extrair_dados_da_mensagem(mensagem_usuario)
+    # 1. Puxa a memória da IA
+    historico = obter_historico(cursor)
+
+    # 2. A IA analisa a mensagem (agora sabendo o que foi falado antes!)
+    dados = extrair_dados_da_mensagem(mensagem_usuario, historico)
 
     if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
         resp.message(f"🕵️ Ops, o motor travou:\n\n{dados}")
@@ -122,17 +151,18 @@ def whatsapp():
     try:
         intencao = dados.get("intencao", "conversa")
         resposta_da_ia = dados.get("resposta_ia", "")
-        transacoes = dados.get("transacoes", []) # Agora a gente pega a lista inteira!
+        transacoes = dados.get("transacoes", [])
         
-        # CENA 1: É apenas um bate-papo (Lista de transações está vazia)
+        # 3. Salva a nova mensagem do usuário e a resposta da IA na memória
+        salvar_historico(cursor, conn, "user", mensagem_usuario)
+        salvar_historico(cursor, conn, "assistant", resposta_da_ia)
+        
         if intencao == "conversa" or not transacoes:
             resp.message(f"🤖 {resposta_da_ia}")
             
-        # CENA 2: É uma transação (Ou várias de uma vez!)
         else:
             data_atual = datetime.now().strftime("%Y-%m-%d")
             
-            # Aqui está a mágica: um "for" que repete a gravação para cada item da lista
             for item in transacoes:
                 categoria = str(item.get('categoria', 'Geral')).capitalize()
                 valor_str = str(item.get('valor', 0)).replace(",", ".")
@@ -146,10 +176,8 @@ def whatsapp():
                     
                 cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', (data_atual, categoria, valor_banco))
             
-            # Salva tudo de uma vez
             conn.commit()
             
-            # Monta o extrato final
             mes_atual = datetime.now().strftime("%Y-%m")
             cursor.execute('SELECT categoria, valor FROM gastos WHERE data LIKE ?', (f'{mes_atual}%',))
             registros = cursor.fetchall()
@@ -177,7 +205,6 @@ def whatsapp():
             else:
                 extrato_txt += f"\n📊 Saldo Atual = 🟢 R$ {str(total_formatado).replace('-', '')} (No azul!)"
             
-            # Junta a resposta super humana da IA com o extrato completo
             mensagem_final = f"🤖 {resposta_da_ia}\n\n{extrato_txt}"
             resp.message(mensagem_final)
             
