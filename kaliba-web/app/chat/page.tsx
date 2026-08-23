@@ -16,6 +16,8 @@ import {
   Send,
   Bot,
   User,
+  Paperclip,
+  X,
 } from "lucide-react";
 
 interface Message {
@@ -32,22 +34,47 @@ export default function ChatPage() {
     },
   ]);
   const [input, setInput] = useState("");
+  const [image, setImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = () => {
+    setImage(null);
+  };
 
   const handleSend = async (textToSend?: string) => {
     const query = textToSend || input;
-    if (!query.trim() || loading) return;
+    if ((!query.trim() && !image) || loading) return;
 
-    const userMsg: Message = { role: "user", content: query };
+    const userMsgContent = query || "[Comprovante/Imagem enviada]";
+    const userMsg: Message = { role: "user", content: userMsgContent };
+
     setMessages((prev) => [...prev, userMsg]);
+    
+    const payload = {
+      message: query,
+      image: image,
+    };
+
     if (!textToSend) setInput("");
+    setImage(null);
     setLoading(true);
 
     try {
       const res = await fetch("https://kaliba-web-api.onrender.com/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: query }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       setMessages((prev) => [
@@ -59,7 +86,7 @@ export default function ChatPage() {
         ...prev,
         {
           role: "assistant",
-          content: "Desculpe, não consegui conectar ao servidor Python no momento.",
+          content: "Desculpe, não consegui conectar ao servidor no momento.",
         },
       ]);
     } finally {
@@ -92,18 +119,18 @@ export default function ChatPage() {
               { label: "Insights", icon: Sparkles },
               { label: "Configurações", icon: Settings },
             ].map((item, idx) => (
-            <a
+              <a
                 key={idx}
                 href={item.label === "Chat com IA" ? "/chat" : item.label === "Dashboard" ? "/" : "#"}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    item.active
-                        ? "bg-zinc-800/80 text-zinc-100 font-medium"
-                        : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+                  item.active
+                    ? "bg-zinc-800/80 text-zinc-100 font-medium"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
                 }`}
-            >
+              >
                 <item.icon className="w-4 h-4" />
                 {item.label}
-            </a>
+              </a>
             ))}
           </nav>
         </div>
@@ -133,7 +160,7 @@ export default function ChatPage() {
             </div>
             <div>
               <h1 className="text-sm font-semibold">Assistente Kaliba</h1>
-              <p className="text-xs text-zinc-400">Online • Conectado via Llama 3.3</p>
+              <p className="text-xs text-zinc-400">Online • Visão Multimodal Ativa</p>
             </div>
           </div>
         </header>
@@ -174,7 +201,7 @@ export default function ChatPage() {
                 <Bot className="w-4 h-4" />
               </div>
               <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-sm animate-pulse">
-                Analisando suas finanças...
+                Analisando imagem e finanças...
               </div>
             </div>
           )}
@@ -200,8 +227,18 @@ export default function ChatPage() {
           </div>
         )}
 
-        {/* INPUT */}
+        {/* INPUT E BOTÃO DE ANEXO */}
         <div className="p-4 border-t border-zinc-800">
+          {image && (
+            <div className="mb-2 inline-flex items-center gap-2 bg-zinc-800 p-1.5 px-3 rounded-lg border border-zinc-700 text-xs">
+              <img src={image} alt="Preview" className="w-6 h-6 object-cover rounded" />
+              <span className="text-zinc-300">Imagem selecionada</span>
+              <button onClick={removeImage} className="text-zinc-400 hover:text-zinc-100 ml-1">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -209,16 +246,33 @@ export default function ChatPage() {
             }}
             className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl p-2 focus-within:border-zinc-700"
           >
+            {/* Botão de Anexo */}
+            <label
+              htmlFor="upload-input"
+              className="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer rounded-lg hover:bg-zinc-800 transition-colors"
+              title="Anexar comprovante ou imagem"
+            >
+              <Paperclip className="w-4 h-4" />
+            </label>
+            <input
+              id="upload-input"
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageUpload}
+            />
+
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Pergunte sobre seus gastos, saldo ou metas..."
-              className="flex-1 bg-transparent px-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
+              placeholder="Envie uma mensagem ou foto de comprovante..."
+              className="flex-1 bg-transparent px-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
             />
+
             <button
               type="submit"
-              disabled={loading || !input.trim()}
+              disabled={loading || (!input.trim() && !image)}
               className="p-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-zinc-950 transition-colors"
             >
               <Send className="w-4 h-4" />

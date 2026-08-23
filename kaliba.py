@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import time
 import requests
+import base64
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -13,18 +14,34 @@ from groq import Groq
 app = Flask(__name__)
 CORS(app)
 
-# 1. Configuração da IA
+# Configuração da IA
 api_key = os.environ.get("GROQ_API_KEY")
 if not api_key:
     print("⚠️ A variável GROQ_API_KEY não foi configurada.")
 
-client = Groq(
-    api_key=os.environ.get("GROQ_API_KEY")
-)
+client = Groq(api_key=api_key)
 
-# ==========================================
-# ROTAS DA API
-# ==========================================
+def obter_imagem_base64(url_ou_base64):
+    """Baixa a imagem com autenticação da Twilio e converte para Base64."""
+    if not url_ou_base64:
+        return None
+    if url_ou_base64.startswith("data:image"):
+        return url_ou_base64
+
+    sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    token = os.environ.get("TWILIO_AUTH_TOKEN")
+    auth = (sid, token) if sid and token else None
+
+    try:
+        res = requests.get(url_ou_base64, auth=auth)
+        if res.status_code == 200:
+            content_type = res.headers.get("Content-Type", "image/jpeg")
+            b64_data = base64.b64encode(res.content).decode("utf-8")
+            return f"data:{content_type};base64,{b64_data}"
+    except Exception as e:
+        print(f"Erro ao baixar imagem: {e}")
+    return url_ou_base64
+
 @app.route("/api/dashboard", methods=["GET"])
 def api_dashboard():
     dados_financeiros = {
@@ -53,12 +70,9 @@ def api_chat():
     resposta_texto = resultado.get("resposta_ia", "Não consegui entender, pode repetir?")
     return jsonify({"reply": resposta_texto}), 200
 
-# ==========================================
-# MOTOR DE KEEP-ALIVE E PÁGINA INICIAL
-# ==========================================
 @app.route("/")
 def home():
-    return "<h1>🤖 Bot Financeiro da Kaliba está ONLINE!</h1><p>O servidor está rodando perfeitamente.</p>", 200
+    return "<h1>🤖 Bot Financeiro da Kaliba está ONLINE!</h1>", 200
 
 @app.route("/ping")
 def ping():
@@ -70,16 +84,12 @@ def ping_automatico():
     while True:
         try:
             requests.get(url_ping)
-            print("🟢 Ping de auto-sustentação enviado.")
         except:
             pass
         time.sleep(600)
 
 threading.Thread(target=ping_automatico, daemon=True).start()
 
-# ==========================================
-# 2. Banco de Dados
-# ==========================================
 def conectar_banco():
     conn = sqlite3.connect('gastos_kaliba.db')
     cursor = conn.cursor()
@@ -110,14 +120,7 @@ def salvar_historico(cursor, conn, role, content):
     cursor.execute("INSERT INTO historico (role, content) VALUES (?, ?)", (role, content))
     conn.commit()
 
-# ==========================================
-# 3. Inteligência Artificial
-# ==========================================
 def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=None):
-    meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
-    mes_atual_nome = meses_pt[datetime.now().strftime("%m")]
-    ano_atual = datetime.now().strftime("%Y")
-    
     prompt_sistema = f"""O SEU NOME é Kaliba. Você é uma assistente financeira pessoal brilhante.
     O nome do usuário é Hector. Hoje é {datetime.now().strftime('%d/%m/%Y')}.
     
@@ -132,10 +135,12 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=N
     mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
     
     if url_imagem:
-        texto_prompt = mensagem_usuario if mensagem_usuario and mensagem_usuario.strip() else "Analise esta imagem financeira (comprovante, gráfico ou extrato) e extraia todas as informações relevantes."
+        imagem_b64 = obter_imagem_base64(url_imagem)
+        texto_prompt = mensagem_usuario if mensagem_usuario and mensagem_usuario.strip() else "Analise esta imagem financeira e extraia as informações relevantes."
+        
         conteudo_usuario = [
             {"type": "text", "text": f"{texto_prompt}\nResponda estritamente em formato JSON."},
-            {"type": "image_url", "image_url": {"url": url_imagem}}
+            {"type": "image_url", "image_url": {"url": imagem_b64}}
         ]
         mensagens_para_ia.append({"role": "user", "content": conteudo_usuario})
     else:
@@ -152,26 +157,19 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=N
     except Exception as e:
         return f"ERRO_TECNICO: {str(e)}"
 
-# ==========================================
-# 4. Conexão com WhatsApp
-# ==========================================
 @app.route("/whatsapp", methods=['GET', 'POST'])
 def whatsapp():
     if request.method == 'GET':
-        return "O endpoint /whatsapp está ativo e aguardando mensagens POST do Twilio!", 200
+        return "Endpoint /whatsapp ativo!", 200
 
     mensagem_usuario = request.values.get('Body', '').strip()
-    
-    # Captura a imagem enviada pelo WhatsApp (se existir)
     num_media = int(request.values.get("NumMedia", 0))
     url_imagem = request.values.get("MediaUrl0") if num_media > 0 else None
 
     resp = MessagingResponse()
-    
     conn = conectar_banco()
     cursor = conn.cursor()
 
-    # Comando de Reset
     if any(palavra in mensagem_usuario.lower() for palavra in ["limpar tudo", "resetar", "limpar chat"]):
         cursor.execute("DELETE FROM gastos")
         cursor.execute("DELETE FROM historico")
@@ -180,7 +178,6 @@ def whatsapp():
         resp.message("✅ Kaliba: Memória e gastos zerados!")
         return str(resp)
 
-    # Processamento Normal
     historico = obter_historico(cursor)
     dados = extrair_dados_da_mensagem(mensagem_usuario, historico, url_imagem=url_imagem)
 
@@ -217,9 +214,6 @@ def whatsapp():
     conn.close()
     return str(resp)
 
-# ==========================================
-# INICIALIZAÇÃO
-# ==========================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
