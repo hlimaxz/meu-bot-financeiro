@@ -5,29 +5,28 @@ import threading
 import time
 import requests
 from datetime import datetime
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from twilio.twiml.messaging_response import MessagingResponse
 from groq import Groq
 
 app = Flask(__name__)
 CORS(app)
+
 # 1. Configuração da IA
 api_key = os.environ.get("GROQ_API_KEY")
 if not api_key:
-    # Se você vir este erro no log do Render, verifique a aba Environment Variables!
     print("⚠️ A variável GROQ_API_KEY não foi configurada.")
 
 client = Groq(
-    api_key = os.environ.get("GROQ_API_KEY")
+    api_key=os.environ.get("GROQ_API_KEY")
 )
 
-from flask import jsonify
-
+# ==========================================
+# ROTAS DA API
+# ==========================================
 @app.route("/api/dashboard", methods=["GET"])
 def api_dashboard():
-    # Isso é um teste seguro! 
-    # Depois vamos trocar pelos dados reais do banco de dados.
     dados_financeiros = {
         "usuario": "Hector",
         "saldo_total": 12500.50,
@@ -39,20 +38,21 @@ def api_dashboard():
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     dados = request.get_json() or {}
-    mensagem_usuario = dados.get("message", "")
+    mensagem_usuario = dados.get("message", "") or dados.get("mensagem", "")
+    url_imagem = dados.get("image", None) or dados.get("imagem", None)
 
-    if not mensagem_usuario:
-        return jsonify({"error": "Mensagem vazia"}), 400
+    if not mensagem_usuario and not url_imagem:
+        return jsonify({"error": "Mensagem ou imagem vazia"}), 400
 
-    # Reutiliza a função de IA já existente no seu código
     historico = [] 
-    resultado = extrair_dados_da_mensagem(mensagem_usuario, historico)
+    resultado = extrair_dados_da_mensagem(mensagem_usuario, historico, url_imagem=url_imagem)
 
     if isinstance(resultado, str) and resultado.startswith("ERRO_TECNICO:"):
-        return jsonify({"reply": "Ops, tive um problema técnico ao consultar a IA."}), 500
+        return jsonify({"reply": f"Ops, tive um problema técnico: {resultado}"}), 500
 
     resposta_texto = resultado.get("resposta_ia", "Não consegui entender, pode repetir?")
     return jsonify({"reply": resposta_texto}), 200
+
 # ==========================================
 # MOTOR DE KEEP-ALIVE E PÁGINA INICIAL
 # ==========================================
@@ -65,7 +65,6 @@ def ping():
     return "Bot acordado!", 200
 
 def ping_automatico():
-    # Espera o servidor subir totalmente antes de começar
     time.sleep(30)
     url_ping = "https://meu-bot-financeiro-vcou.onrender.com/ping"
     while True:
@@ -74,7 +73,7 @@ def ping_automatico():
             print("🟢 Ping de auto-sustentação enviado.")
         except:
             pass
-        time.sleep(600) # 10 minutos
+        time.sleep(600)
 
 threading.Thread(target=ping_automatico, daemon=True).start()
 
@@ -114,7 +113,7 @@ def salvar_historico(cursor, conn, role, content):
 # ==========================================
 # 3. Inteligência Artificial
 # ==========================================
-def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
+def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=None):
     meses_pt = {"01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"}
     mes_atual_nome = meses_pt[datetime.now().strftime("%m")]
     ano_atual = datetime.now().strftime("%Y")
@@ -131,12 +130,21 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
     """
     
     mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
-    mensagens_para_ia.extend(historico_conversa)
-    mensagens_para_ia.append({"role": "user", "content": mensagem_usuario})
+    
+    if url_imagem:
+        texto_prompt = mensagem_usuario if mensagem_usuario and mensagem_usuario.strip() else "Analise esta imagem financeira (comprovante, gráfico ou extrato) e extraia todas as informações relevantes."
+        conteudo_usuario = [
+            {"type": "text", "text": f"{texto_prompt}\nResponda estritamente em formato JSON."},
+            {"type": "image_url", "image_url": {"url": url_imagem}}
+        ]
+        mensagens_para_ia.append({"role": "user", "content": conteudo_usuario})
+    else:
+        mensagens_para_ia.extend(historico_conversa)
+        mensagens_para_ia.append({"role": "user", "content": mensagem_usuario})
     
     try:
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b", # Modelo ultra rápido para evitar timeout do Twilio
+            model="qwen/qwen3.6-27b",
             response_format={ "type": "json_object" },
             messages=mensagens_para_ia
         )
@@ -145,22 +153,26 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
         return f"ERRO_TECNICO: {str(e)}"
 
 # ==========================================
-# 4. Conexão com WhatsApp (Ajustada)
+# 4. Conexão com WhatsApp
 # ==========================================
 @app.route("/whatsapp", methods=['GET', 'POST'])
 def whatsapp():
-    # Se alguém acessar pelo navegador (GET), damos um aviso amigável
     if request.method == 'GET':
         return "O endpoint /whatsapp está ativo e aguardando mensagens POST do Twilio!", 200
 
-    mensagem_usuario = request.values.get('Body', '').lower()
+    mensagem_usuario = request.values.get('Body', '').strip()
+    
+    # Captura a imagem enviada pelo WhatsApp (se existir)
+    num_media = int(request.values.get("NumMedia", 0))
+    url_imagem = request.values.get("MediaUrl0") if num_media > 0 else None
+
     resp = MessagingResponse()
     
     conn = conectar_banco()
     cursor = conn.cursor()
 
     # Comando de Reset
-    if any(palavra in mensagem_usuario for palavra in ["limpar tudo", "resetar", "limpar chat"]):
+    if any(palavra in mensagem_usuario.lower() for palavra in ["limpar tudo", "resetar", "limpar chat"]):
         cursor.execute("DELETE FROM gastos")
         cursor.execute("DELETE FROM historico")
         conn.commit()
@@ -170,7 +182,7 @@ def whatsapp():
 
     # Processamento Normal
     historico = obter_historico(cursor)
-    dados = extrair_dados_da_mensagem(mensagem_usuario, historico)
+    dados = extrair_dados_da_mensagem(mensagem_usuario, historico, url_imagem=url_imagem)
 
     if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
         resp.message(f"🕵️ Kaliba: Tive um problema técnico: {dados}")
@@ -181,7 +193,8 @@ def whatsapp():
         resposta_da_ia = dados.get("resposta_ia", "Estou processando...")
         transacoes = dados.get("transacoes", [])
         
-        salvar_historico(cursor, conn, "user", mensagem_usuario)
+        texto_salvar = mensagem_usuario if mensagem_usuario else "[Imagem enviada]"
+        salvar_historico(cursor, conn, "user", texto_salvar)
         salvar_historico(cursor, conn, "assistant", resposta_da_ia)
         
         if not transacoes:
