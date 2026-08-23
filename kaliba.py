@@ -9,6 +9,7 @@ from flask import Flask, request
 from flask_cors import CORS
 from twilio.twiml.messaging_response import MessagingResponse
 from openai import OpenAI
+from groq import Groq
 
 app = Flask(__name__)
 CORS(app)
@@ -18,9 +19,8 @@ if not api_key:
     # Se você vir este erro no log do Render, verifique a aba Environment Variables!
     print("⚠️ A variável GROQ_API_KEY não foi configurada.")
 
-client = OpenAI(
-    api_key = os.environ.get("GROQ_API_KEY"), 
-    base_url="https://api.groq.com/openai/v1"
+client = Groq(
+    api_key = os.environ.get("GROQ_API_KEY")
 )
 
 from flask import jsonify
