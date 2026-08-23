@@ -91,7 +91,7 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=N
         mensagens_para_ia.extend(historico_conversa)
         mensagens_para_ia.append({"role": "user", "content": mensagem_usuario})
         
-        modelo = "llama-3.3-70b-versatile"
+        modelo = "qwen/qwen3.6-27b"
         usar_json_mode = True
 
     try:
