@@ -5,6 +5,7 @@ import threading
 import time
 import requests
 import base64
+import re
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -22,109 +23,39 @@ if not api_key:
 client = Groq(api_key=api_key)
 
 def obter_imagem_base64(url_ou_base64):
-    """Baixa a imagem com autenticação da Twilio e converte para Base64."""
+    """Baixa a imagem com autenticação da Twilio ou aceita a do site."""
     if not url_ou_base64:
         return None
+        
+    # Se a imagem vier do Site (já vem em formato base64)
     if url_ou_base64.startswith("data:image"):
         return url_ou_base64
 
+    # Se a imagem vier do WhatsApp (URL da Twilio)
     sid = os.environ.get("TWILIO_ACCOUNT_SID")
     token = os.environ.get("TWILIO_AUTH_TOKEN")
-    auth = (sid, token) if sid and token else None
+    
+    if not sid or not token:
+        raise Exception("Faltam as credenciais da Twilio no Render.")
 
     try:
-        res = requests.get(url_ou_base64, auth=auth)
+        # Baixa a imagem forçando autenticação
+        res = requests.get(url_ou_base64, auth=(sid, token))
         if res.status_code == 200:
             content_type = res.headers.get("Content-Type", "image/jpeg")
             b64_data = base64.b64encode(res.content).decode("utf-8")
             return f"data:{content_type};base64,{b64_data}"
+        else:
+            raise Exception(f"A Twilio bloqueou o acesso. Código: {res.status_code}")
     except Exception as e:
-        print(f"Erro ao baixar imagem: {e}")
-    return url_ou_base64
-
-@app.route("/api/dashboard", methods=["GET"])
-def api_dashboard():
-    dados_financeiros = {
-        "usuario": "Hector",
-        "saldo_total": 12500.50,
-        "receitas": 15000.00,
-        "despesas": 2499.50
-    }
-    return jsonify(dados_financeiros), 200
-
-@app.route("/api/chat", methods=["POST"])
-def api_chat():
-    dados = request.get_json() or {}
-    mensagem_usuario = dados.get("message", "") or dados.get("mensagem", "")
-    url_imagem = dados.get("image", None) or dados.get("imagem", None)
-
-    if not mensagem_usuario and not url_imagem:
-        return jsonify({"error": "Mensagem ou imagem vazia"}), 400
-
-    historico = [] 
-    resultado = extrair_dados_da_mensagem(mensagem_usuario, historico, url_imagem=url_imagem)
-
-    if isinstance(resultado, str) and resultado.startswith("ERRO_TECNICO:"):
-        return jsonify({"reply": f"Ops, tive um problema técnico: {resultado}"}), 500
-
-    resposta_texto = resultado.get("resposta_ia", "Não consegui entender, pode repetir?")
-    return jsonify({"reply": resposta_texto}), 200
-
-@app.route("/")
-def home():
-    return "<h1>🤖 Bot Financeiro da Kaliba está ONLINE!</h1>", 200
-
-@app.route("/ping")
-def ping():
-    return "Bot acordado!", 200
-
-def ping_automatico():
-    time.sleep(30)
-    url_ping = "https://meu-bot-financeiro-vcou.onrender.com/ping"
-    while True:
-        try:
-            requests.get(url_ping)
-        except:
-            pass
-        time.sleep(600)
-
-threading.Thread(target=ping_automatico, daemon=True).start()
-
-def conectar_banco():
-    conn = sqlite3.connect('gastos_kaliba.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS gastos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data TEXT,
-            categoria TEXT,
-            valor REAL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historico (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT,
-            content TEXT
-        )
-    ''')
-    conn.commit()
-    return conn
-
-def obter_historico(cursor):
-    cursor.execute("SELECT role, content FROM historico ORDER BY id DESC LIMIT 20")
-    linhas = cursor.fetchall()
-    return [{"role": r[0], "content": r[1]} for r in reversed(linhas)]
-
-def salvar_historico(cursor, conn, role, content):
-    cursor.execute("INSERT INTO historico (role, content) VALUES (?, ?)", (role, content))
-    conn.commit()
+        raise Exception(f"Falha ao baixar imagem: {e}")
 
 def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=None):
     prompt_sistema = f"""O SEU NOME é Kaliba. Você é uma assistente financeira pessoal brilhante.
     O nome do usuário é Hector. Hoje é {datetime.now().strftime('%d/%m/%Y')}.
     
-    Você DEVE retornar APENAS um objeto JSON válido:
+    Você DEVE retornar APENAS um objeto JSON válido. Não adicione nenhum texto antes ou depois.
+    Formato OBRIGATÓRIO:
     {{
         "intencao": "transacao" ou "conversa",
         "resposta_ia": "Sua resposta humana aqui.",
@@ -132,30 +63,80 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=N
     }}
     """
     
-    mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
-    
     if url_imagem:
-        imagem_b64 = obter_imagem_base64(url_imagem)
-        texto_prompt = mensagem_usuario if mensagem_usuario and mensagem_usuario.strip() else "Analise esta imagem financeira e extraia as informações relevantes."
+        # --- FLUXO COM IMAGEM (Usa modelo Llama Vision) ---
+        try:
+            imagem_b64 = obter_imagem_base64(url_imagem)
+        except Exception as e:
+            return f"ERRO_TECNICO: {str(e)}"
+            
+        texto_prompt = mensagem_usuario if mensagem_usuario and mensagem_usuario.strip() else "Analise esta imagem financeira e extraia as informações."
         
         conteudo_usuario = [
-            {"type": "text", "text": f"{texto_prompt}\nResponda estritamente em formato JSON."},
+            {"type": "text", "text": f"{texto_prompt}\nResponda APENAS com o JSON solicitado."},
             {"type": "image_url", "image_url": {"url": imagem_b64}}
         ]
-        mensagens_para_ia.append({"role": "user", "content": conteudo_usuario})
+        
+        mensagens_para_ia = [
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": conteudo_usuario}
+        ]
+        
+        modelo = "llama-3.2-90b-vision-preview" # Único modelo da Groq que lê imagem bem
+        usar_json_mode = False # Modelos Vision da Groq não aceitam modo JSON forçado
+        
     else:
+        # --- FLUXO APENAS TEXTO ---
+        mensagens_para_ia = [{"role": "system", "content": prompt_sistema}]
         mensagens_para_ia.extend(historico_conversa)
         mensagens_para_ia.append({"role": "user", "content": mensagem_usuario})
-    
+        
+        modelo = "llama-3.3-70b-versatile"
+        usar_json_mode = True
+
     try:
-        response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b",
-            response_format={ "type": "json_object" },
-            messages=mensagens_para_ia
-        )
-        return json.loads(response.choices[0].message.content)
+        kwargs = {
+            "model": modelo,
+            "messages": mensagens_para_ia
+        }
+        if usar_json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+            
+        response = client.chat.completions.create(**kwargs)
+        conteudo_resposta = response.choices[0].message.content.strip()
+        
+        # Como o modelo de visão não aceita JSON mode, limpamos o texto para forçar extrair o JSON
+        if not usar_json_mode:
+            match = re.search(r'\{.*\}', conteudo_resposta, re.DOTALL)
+            if match:
+                conteudo_resposta = match.group(0)
+                
+        return json.loads(conteudo_resposta)
     except Exception as e:
-        return f"ERRO_TECNICO: {str(e)}"
+        return f"ERRO_TECNICO: Falha na IA - {str(e)}"
+
+
+# ==========================================
+# ROTAS DO FLASK
+# ==========================================
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    dados = request.get_json() or {}
+    mensagem_usuario = dados.get("message", "")
+    url_imagem = dados.get("image", None)
+
+    if not mensagem_usuario and not url_imagem:
+        return jsonify({"error": "Mensagem vazia"}), 400
+
+    historico = [] # Simplificado para o front-end
+    resultado = extrair_dados_da_mensagem(mensagem_usuario, historico, url_imagem=url_imagem)
+
+    if isinstance(resultado, str) and resultado.startswith("ERRO_TECNICO:"):
+        return jsonify({"reply": f"Ops, erro técnico: {resultado}"}), 500
+
+    resposta_texto = resultado.get("resposta_ia", "Não consegui entender, pode repetir?")
+    return jsonify({"reply": resposta_texto}), 200
 
 @app.route("/whatsapp", methods=['GET', 'POST'])
 def whatsapp():
@@ -167,52 +148,28 @@ def whatsapp():
     url_imagem = request.values.get("MediaUrl0") if num_media > 0 else None
 
     resp = MessagingResponse()
-    conn = conectar_banco()
-    cursor = conn.cursor()
-
-    if any(palavra in mensagem_usuario.lower() for palavra in ["limpar tudo", "resetar", "limpar chat"]):
-        cursor.execute("DELETE FROM gastos")
-        cursor.execute("DELETE FROM historico")
-        conn.commit()
-        conn.close()
-        resp.message("✅ Kaliba: Memória e gastos zerados!")
-        return str(resp)
-
-    historico = obter_historico(cursor)
+    
+    # Historico em branco apenas para não quebrar a lógica sem o DB
+    historico = [] 
+    
     dados = extrair_dados_da_mensagem(mensagem_usuario, historico, url_imagem=url_imagem)
 
     if isinstance(dados, str) and dados.startswith("ERRO_TECNICO:"):
-        resp.message(f"🕵️ Kaliba: Tive um problema técnico: {dados}")
-        conn.close()
+        resp.message(f"🕵️ Kaliba: Tive um problema: {dados}")
         return str(resp)
 
     try:
         resposta_da_ia = dados.get("resposta_ia", "Estou processando...")
-        transacoes = dados.get("transacoes", [])
-        
-        texto_salvar = mensagem_usuario if mensagem_usuario else "[Imagem enviada]"
-        salvar_historico(cursor, conn, "user", texto_salvar)
-        salvar_historico(cursor, conn, "assistant", resposta_da_ia)
-        
-        if not transacoes:
-            resp.message(f"🤖 {resposta_da_ia}")
-        else:
-            data_atual = datetime.now().strftime("%Y-%m-%d")
-            for item in transacoes:
-                categoria = str(item.get('categoria', 'Geral')).capitalize()
-                valor = abs(float(str(item.get('valor', 0)).replace(",", ".")))
-                tipo = str(item.get('tipo', 'gasto')).lower()
-                valor_banco = -valor if tipo in ['ganho', 'receita'] else valor
-                cursor.execute('INSERT INTO gastos (data, categoria, valor) VALUES (?, ?, ?)', (data_atual, categoria, valor_banco))
-            
-            conn.commit()
-            resp.message(f"🤖 {resposta_da_ia}\n\n✅ Gasto registrado!")
+        resp.message(f"🤖 {resposta_da_ia}")
             
     except Exception as e:
-        resp.message(f"❌ Erro ao salvar: {e}")
+        resp.message(f"❌ Erro: {e}")
 
-    conn.close()
     return str(resp)
+
+@app.route("/")
+def home():
+    return "<h1>🤖 Kaliba ONLINE</h1>", 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
