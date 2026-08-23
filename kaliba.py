@@ -6,11 +6,12 @@ import time
 import requests
 from datetime import datetime
 from flask import Flask, request
+from flask_cors import CORS
 from twilio.twiml.messaging_response import MessagingResponse
 from openai import OpenAI
 
 app = Flask(__name__)
-
+CORS(app)
 # 1. Configuração da IA
 api_key = os.environ.get("GROQ_API_KEY")
 if not api_key:
@@ -22,6 +23,37 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
+from flask import jsonify
+
+@app.route("/api/dashboard", methods=["GET"])
+def api_dashboard():
+    # Isso é um teste seguro! 
+    # Depois vamos trocar pelos dados reais do banco de dados.
+    dados_financeiros = {
+        "usuario": "Hector",
+        "saldo_total": 12500.50,
+        "receitas": 15000.00,
+        "despesas": 2499.50
+    }
+    return jsonify(dados_financeiros), 200
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    dados = request.get_json() or {}
+    mensagem_usuario = dados.get("message", "")
+
+    if not mensagem_usuario:
+        return jsonify({"error": "Mensagem vazia"}), 400
+
+    # Reutiliza a função de IA já existente no seu código
+    historico = [] 
+    resultado = extrair_dados_da_mensagem(mensagem_usuario, historico)
+
+    if isinstance(resultado, str) and resultado.startswith("ERRO_TECNICO:"):
+        return jsonify({"reply": "Ops, tive um problema técnico ao consultar a IA."}), 500
+
+    resposta_texto = resultado.get("resposta_ia", "Não consegui entender, pode repetir?")
+    return jsonify({"reply": resposta_texto}), 200
 # ==========================================
 # MOTOR DE KEEP-ALIVE E PÁGINA INICIAL
 # ==========================================
