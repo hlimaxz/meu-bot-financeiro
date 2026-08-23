@@ -8,7 +8,6 @@ from datetime import datetime
 from flask import Flask, request
 from flask_cors import CORS
 from twilio.twiml.messaging_response import MessagingResponse
-from openai import OpenAI
 from groq import Groq
 
 app = Flask(__name__)
