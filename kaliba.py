@@ -136,7 +136,7 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa):
     
     try:
         response = client.chat.completions.create(
-            model="qwen-2.5-coder-32b", # Modelo ultra rápido para evitar timeout do Twilio
+            model="qwen/qwen3.6-27b", # Modelo ultra rápido para evitar timeout do Twilio
             response_format={ "type": "json_object" },
             messages=mensagens_para_ia
         )
