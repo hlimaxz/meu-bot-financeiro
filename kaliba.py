@@ -19,7 +19,7 @@ if not api_key:
     print("⚠️ A variável GROQ_API_KEY não foi configurada.")
 
 client = OpenAI(
-    api_key=api_key if api_key else "dummy_key", 
+    api_key=api_key, 
     base_url="https://api.groq.com/openai/v1"
 )
 
