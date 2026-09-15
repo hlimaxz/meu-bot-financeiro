@@ -82,7 +82,7 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=N
             {"role": "user", "content": conteudo_usuario}
         ]
         
-        modelo = "llama-3.3-70b-versatile" # Único modelo da Groq que lê imagem bem
+        modelo = "openai/gpt-oss-120b" # Único modelo da Groq que lê imagem bem
         usar_json_mode = False # Modelos Vision da Groq não aceitam modo JSON forçado
         
     else:
@@ -91,7 +91,7 @@ def extrair_dados_da_mensagem(mensagem_usuario, historico_conversa, url_imagem=N
         mensagens_para_ia.extend(historico_conversa)
         mensagens_para_ia.append({"role": "user", "content": mensagem_usuario})
         
-        modelo = "llama-3.3-70b-versatile"
+        modelo = "openai/gpt-oss-120b"
         usar_json_mode = True
 
     try:
